@@ -1,0 +1,109 @@
+{
+  "name": "Assistente de Investimentos (RPA + N8N)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "3b6f2c0e-2d4a-4f7e-8a51-7c9d0e1f2a03"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e02",
+      "name": "Ler investimentos (CSV)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entradas: corpo do Webhook ({ \"clientes\": [...] }) e o CSV de investimentos (texto).\nconst corpo = $('Webhook').first().json.body ?? {};\nconst clientes = Array.isArray(corpo.clientes) ? corpo.clientes : [];\nconst csv = String($('Ler investimentos (CSV)').first().json.data ?? '');\n\nconst normalizar = (s) =>\n  String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();\n\n// \"R$ 12.500,00\" -> 12500\nconst lerValor = (s) => {\n  const limpo = String(s ?? '').replace(/[^\\d,.-]/g, '').replace(/\\./g, '').replace(',', '.');\n  const n = parseFloat(limpo);\n  return Number.isFinite(n) ? n : null;\n};\n\n// 12500 -> \"R$ 12.500,00\" (sem toLocaleString: evita o espaço não separável)\nconst reais = (n) => {\n  const [inteiro, centavos] = n.toFixed(2).split('.');\n  return `R$ ${inteiro.replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')},${centavos}`;\n};\n\n// \"6.2%\" -> \"6,2%\"; \"IPCA+6.0%\" -> \"IPCA + 6,0%\"; \"Variável\" -> \"rentabilidade variável\"\nconst rentabilidade = (r) =>\n  normalizar(r).startsWith('variavel')\n    ? 'rentabilidade variável'\n    : r.replace(/\\+/g, ' + ').replace(/(\\d)\\.(\\d)/g, '$1,$2');\n\nconst listar = (itens) =>\n  itens.length <= 1 ? itens.join('') : `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`;\n\n// CSV simples (sem aspas): perfil,produto,minimo,rentabilidade\nconst [cabecalho, ...linhas] = csv.trim().split(/\\r?\\n/);\nconst colunas = cabecalho.split(',').map((c) => normalizar(c));\nconst produtos = linhas\n  .filter((l) => l.trim())\n  .map((l) => {\n    const v = l.split(',');\n    const p = Object.fromEntries(colunas.map((c, i) => [c, (v[i] ?? '').trim()]));\n    return { perfil: p.perfil, produto: p.produto, minimo: Number(p.minimo), rentabilidade: p.rentabilidade };\n  });\n\nconst ABERTURA = {\n  conservador: 'Como seu perfil é Conservador, priorizamos renda fixa, com foco em segurança e liquidez.',\n  moderado: 'Como seu perfil é Moderado, sugerimos equilibrar proteção e crescimento, combinando prefixado, inflação e multimercado.',\n  arrojado: 'Como seu perfil é Arrojado, destacamos renda variável, com maior potencial de retorno e também mais oscilação.',\n};\n\nconst mensagens = clientes.map((c) => {\n  const nome = String(c.nome ?? '').trim();\n  const primeiroNome = nome.split(/\\s+/)[0] || 'cliente';\n  const chavePerfil = normalizar(c.perfil);\n  const saldo = lerValor(c.saldo);\n  const base = { nome, email: String(c.email ?? '').trim(), perfil: String(c.perfil ?? '').trim(), saldo };\n\n  if (!ABERTURA[chavePerfil]) {\n    return { ...base, status: 'perfil_invalido', recomendados: [], fora_do_alcance: [],\n      mensagem: `Olá, ${primeiroNome}! Não encontramos um perfil de investidor válido no seu cadastro. Atualize seu questionário de perfil para receber recomendações.` };\n  }\n  if (saldo === null) {\n    return { ...base, status: 'saldo_invalido', recomendados: [], fora_do_alcance: [],\n      mensagem: `Olá, ${primeiroNome}! Não conseguimos ler o saldo da sua conta. Fale com a gente para atualizar seus dados.` };\n  }\n\n  const doPerfil = produtos.filter((p) => normalizar(p.perfil) === chavePerfil);\n  const cabem = doPerfil.filter((p) => p.minimo <= saldo);\n  const naoCabem = doPerfil.filter((p) => p.minimo > saldo);\n\n  let texto = `Olá, ${primeiroNome}! ${ABERTURA[chavePerfil]}`;\n  if (cabem.length) {\n    const itens = cabem.map((p) => `${p.produto} (${rentabilidade(p.rentabilidade)}, a partir de ${reais(p.minimo)})`);\n    texto += ` Com o seu saldo de ${reais(saldo)}, você já pode aplicar em: ${listar(itens)}.`;\n  } else {\n    texto += ` Com o seu saldo de ${reais(saldo)}, ainda não há opção disponível para o seu perfil.`;\n  }\n  for (const p of naoCabem) {\n    texto += ` Faltam ${reais(p.minimo - saldo)} para ${p.produto} (mínimo de ${reais(p.minimo)}).`;\n  }\n  texto += ' Conte com a gente para montar sua carteira!';\n\n  return {\n    ...base,\n    status: cabem.length ? 'ok' : 'sem_produto_no_saldo',\n    recomendados: cabem.map((p) => p.produto),\n    fora_do_alcance: naoCabem.map((p) => p.produto),\n    mensagem: texto,\n  };\n});\n\nreturn [{ json: {\n  total: mensagens.length,\n  aviso: 'Dados fictícios, para fins educacionais. Não é recomendação de investimento.',\n  mensagens,\n} }];\n"
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e03",
+      "name": "Cruzar perfis e gerar mensagens",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e04",
+      "name": "Responder ao RPA",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Ler investimentos (CSV)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler investimentos (CSV)": {
+      "main": [
+        [
+          {
+            "node": "Cruzar perfis e gerar mensagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cruzar perfis e gerar mensagens": {
+      "main": [
+        [
+          {
+            "node": "Responder ao RPA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
