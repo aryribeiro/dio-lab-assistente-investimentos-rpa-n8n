@@ -68,7 +68,8 @@ Saída (resposta do Webhook):
 ```
 
 - `status`: `ok`, `sem_produto_no_saldo`, `perfil_invalido` ou `saldo_invalido`.
-- `origem`: `ia` (texto do agente aprovado na conferência) ou `modelo_fixo` (a mensagem fixa, com o `motivo`: falha na chamada, texto vazio, produto fora da lista, promessa de retorno ou cadastro incompleto).
+- `origem`: `ia` (texto do agente aprovado na conferência) ou `modelo_fixo` (a mensagem fixa, com o `motivo`: falha na chamada, texto vazio, produto fora da lista, número que não está nos fatos, promessa de retorno ou cadastro incompleto).
+- Envios com mais de **50 clientes** são recusados antes da IA: a resposta traz `total: 0` e o campo `erro` explicando o limite.
 
 ### Decisões técnicas
 
@@ -80,9 +81,10 @@ Saída (resposta do Webhook):
 - **Extração robusta:** `timeout`, `raise_for_status()`, leitura das células pela classe (`td.nome`, `td.email`...) com a posição como reserva e erro claro se a tabela sumir.
 - **Modo simulado com as mesmas regras:** a lógica do nó Code foi portada para Python e as duas versões foram comparadas, campo a campo, com casos-limite (perfil inválido, saldo ilegível, saldo abaixo de todos os mínimos). As saídas são idênticas.
 - **A IA escreve, mas não decide.** O cruzamento continua em código; o agente recebe como FATOS a mensagem fixa (produtos que cabem no saldo, mínimos, rentabilidades e quanto falta) e só reescreve o texto, com instrução de não citar outro produto, taxa ou número nem prometer retorno.
-- **Texto da IA passa por conferência antes de sair.** O nó *Validar e juntar mensagens* rejeita resposta vazia ou longa demais, citação de produto que não é do cliente e promessas ("garantido", "sem risco"). Rejeitado, o cliente recebe a mensagem fixa e o `motivo` fica registrado.
+- **Texto da IA passa por conferência antes de sair.** O nó *Validar e juntar mensagens* rejeita resposta vazia ou longa demais, citação de produto que não é do cliente, valor em R$ ou percentual que não está nos fatos e promessas ("garantido", "sem risco"). Rejeitado, o cliente recebe a mensagem fixa e o `motivo` fica registrado.
 - **A IA nunca derruba o fluxo.** O agente tenta até 3 vezes e, se falhar, segue adiante (*On Error: continue*); cadastro incompleto não usa IA. Sem chave ou sem cota, todos recebem a mensagem fixa.
 - **Plano gratuito do Gemini:** um cliente por chamada, com 7 s entre chamadas (*Batch Processing* do agente).
+- **Limite de 50 clientes por envio.** O Webhook não pede autenticação; o limite impede que um envio grande, por engano ou de terceiros, esgote a cota gratuita do Gemini. Listas maiores devem ser enviadas em lotes.
 - **Fonte dos dados:** a página e o CSV vêm do GitHub Pages do próprio fork (pasta `docs/`): qualquer mudança em `docs/` vai ao ar com o push.
 
 ### Como foi validado
