@@ -1,5 +1,5 @@
 {
-  "name": "Assistente de Investimentos (RPA + N8N)",
+  "name": "Assistente de Investimentos (RPA + N8N + IA)",
   "nodes": [
     {
       "parameters": {
@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "url": "https://aryribeiro.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
         "options": {
           "response": {
             "response": {
@@ -53,15 +53,125 @@
     },
     {
       "parameters": {
-        "respondWith": "firstIncomingItem",
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5c1d7e9a-0b2f-4c3d-8e4f-6a7b8c9d0e1f",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
         "options": {}
       },
       "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e04",
+      "name": "Tem clientes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "mensagens",
+        "options": {}
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e05",
+      "name": "Separar clientes",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Cliente: {{ $json.nome }}\nPerfil: {{ $json.perfil }}\nFATOS (única fonte permitida):\n{{ $json.mensagem }}",
+        "options": {
+          "systemMessage": "Você é o assistente de relacionamento de uma corretora brasileira. Escreva UMA mensagem curta (até 80 palavras), em português do Brasil, cordial e direta, para o cliente indicado.\nReescreva com as suas palavras: não copie frases dos FATOS. Personalize pelo momento do cliente (quem está começando, quem já tem um bom saldo, quem está perto de alcançar um novo produto).\nRegras obrigatórias:\n- use somente os produtos, valores e rentabilidades que aparecem nos FATOS, escritos exatamente como lá; não cite nenhum outro produto, taxa ou número;\n- se os FATOS disserem quanto falta para um produto, mencione isso como próximo passo;\n- não prometa retorno e não use as expressões \"garantido\" ou \"sem risco\";\n- trate o cliente pelo primeiro nome e termine convidando-o a conversar com a equipe;\n- responda apenas com o texto da mensagem, sem título, sem aspas e sem markdown.",
+          "maxIterations": 3,
+          "enableStreaming": false,
+          "batching": {
+            "batchSize": 1,
+            "delayBetweenBatches": 7000
+          }
+        }
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e06",
+      "name": "Agente de IA",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1100,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {
+          "temperature": 0.7,
+          "maxOutputTokens": 2048
+        }
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e07",
+      "name": "Gemini (gratuito)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        140
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "geminiCredDio01",
+          "name": "Gemini (gratuito)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Junta a saída do agente com os dados de cada cliente. O texto da IA só é usado\n// se passar na conferência; senão, vale a mensagem fixa (gerada pelas regras).\nconst clientes = $('Separar clientes').all().map((i) => i.json);\nconst respostas = $input.all().map((i) => i.json);\nconst base = $('Cruzar perfis e gerar mensagens').first().json;\nconst csv = String($('Ler investimentos (CSV)').first().json.data ?? '');\n\nconst normalizar = (s) =>\n  String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n\nconst todosProdutos = csv.trim().split(/\\r?\\n/).slice(1)\n  .map((l) => l.split(',')[1]?.trim())\n  .filter(Boolean);\n\nconst PROMESSA = /garantid|sem risco|risco zero|retorno cert|lucro cert/;\n\nconst conferir = (cliente, r, texto) => {\n  if (!['ok', 'sem_produto_no_saldo'].includes(cliente.status)) return 'cadastro incompleto: não usa IA';\n  if (r.error) return 'falha na chamada à IA';\n  if (texto.length < 40) return 'IA sem resposta';\n  if (texto.length > 1500) return 'texto longo demais';\n  const t = normalizar(texto);\n  const permitidos = [...cliente.recomendados, ...cliente.fora_do_alcance].map(normalizar);\n  const intruso = todosProdutos.find((p) => !permitidos.includes(normalizar(p)) && t.includes(normalizar(p)));\n  if (intruso) return `citou produto fora da lista (${intruso})`;\n  if (PROMESSA.test(t)) return 'prometeu retorno ou ausência de risco';\n  // Todo valor em R$ e todo percentual do texto tem de existir nos fatos (a mensagem fixa)\n  const numeros = texto.match(/R\\$\\s?\\d[\\d.,]*|\\d[\\d.,]*\\s?%/g) ?? [];\n  const inventado = numeros\n    .map((n) => n.replace(/R\\$\\s?|\\s?%/g, '').replace(/[.,]$/, ''))\n    .find((n) => !cliente.mensagem.includes(n));\n  if (inventado) return `número que não está nos fatos (${inventado})`;\n  return null;\n};\n\nconst mensagens = clientes.map((cliente, i) => {\n  const r = respostas[i] ?? {};\n  const texto = typeof r.output === 'string' ? r.output.trim() : '';\n  const motivo = conferir(cliente, r, texto);\n  return motivo\n    ? { ...cliente, origem: 'modelo_fixo', motivo }\n    : { ...cliente, mensagem: texto, mensagem_fixa: cliente.mensagem, origem: 'ia' };\n});\n\nreturn [{ json: {\n  total: mensagens.length,\n  geradas_por_ia: mensagens.filter((m) => m.origem === 'ia').length,\n  aviso: base.aviso,\n  mensagens,\n} }];\n"
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e08",
+      "name": "Validar e juntar mensagens",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "8f0c1a52-6a3e-4c1e-9d0b-1a2b3c4d5e09",
       "name": "Responder ao RPA",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        660,
+        1640,
         0
       ]
     }
@@ -90,6 +200,68 @@
       ]
     },
     "Cruzar perfis e gerar mensagens": {
+      "main": [
+        [
+          {
+            "node": "Tem clientes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem clientes?": {
+      "main": [
+        [
+          {
+            "node": "Separar clientes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder ao RPA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar clientes": {
+      "main": [
+        [
+          {
+            "node": "Agente de IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (gratuito)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente de IA",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente de IA": {
+      "main": [
+        [
+          {
+            "node": "Validar e juntar mensagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar e juntar mensagens": {
       "main": [
         [
           {

@@ -1,23 +1,36 @@
 # Criando um Assistente de Investimentos com RPA e IA Generativa
 
-## ✅ Solução implementada (MVP)
+## ✅ Solução implementada (MVP + Agente de IA)
 
-O pipeline roda de ponta a ponta: o notebook extrai os 10 clientes da página, envia a lista ao Webhook do N8N e recebe de volta uma mensagem personalizada por cliente, cruzada com o CSV de investimentos.
+O pipeline roda de ponta a ponta: o notebook extrai os 10 clientes da [página no GitHub Pages](https://aryribeiro.github.io/dio-lab-assistente-investimentos-rpa-n8n/), envia a lista ao Webhook do N8N, que cruza cada cliente com o [CSV de investimentos](https://aryribeiro.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv) e pede a um **Agente de IA (Google Gemini, plano gratuito)** uma mensagem personalizada por cliente.
 
 ![Execução do workflow no N8N](evidencias/n8n-execucao.png)
 
+```mermaid
+flowchart LR
+  W["Webhook"] --> C["Ler investimentos (CSV)"] --> X["Cruzar perfis e<br>gerar mensagens"] --> T{"Tem clientes?"}
+  T -- sim --> S["Separar clientes"] --> A["Agente de IA"] --> V["Validar e juntar<br>mensagens"] --> R["Responder ao RPA"]
+  G["Gemini (gratuito)"] -. modelo .-> A
+  T -- não --> R
+```
+
 | Peça | Arquivo | O que faz |
 |------|---------|-----------|
-| RPA | [`rpa/extrair_clientes.ipynb`](rpa/extrair_clientes.ipynb) | Lê a tabela `#clientes`, envia ao Webhook e mostra as mensagens. Sem Webhook configurado, roda em **modo simulado** com as mesmas regras do workflow |
-| Workflow | [`n8n/workflow.json`](n8n/workflow.json) | `Webhook` → `Ler investimentos (CSV)` → `Cruzar perfis e gerar mensagens` → `Responder ao RPA` |
-| Evidências | [`evidencias/`](evidencias/) | Execução bem-sucedida e saída do nó que gera as mensagens |
+| Dados | [`docs/`](docs/) | Página de clientes e CSV de investimentos, publicados pelo GitHub Pages do fork |
+| RPA | [`rpa/extrair_clientes.ipynb`](rpa/extrair_clientes.ipynb) | Lê a tabela `#clientes`, envia ao Webhook e mostra as mensagens. Sem Webhook configurado, roda em **modo simulado** com as mesmas regras do workflow (sem IA) |
+| Workflow | [`n8n/workflow.json`](n8n/workflow.json) | Cruza perfil e saldo com o CSV, pede o texto ao Agente de IA, confere o texto e responde ao RPA |
+| Evidências | [`evidencias/`](evidencias/) | Execução bem-sucedida e saída do workflow |
 
 ### Como executar
 
-1. No N8N, importe `n8n/workflow.json` (**Workflows → Import from File**).
-2. Copie a URL do nó **Webhook**: a de teste (`/webhook-test/clientes`) vale depois de clicar em *Execute workflow*; a de produção (`/webhook/clientes`), com o workflow publicado/ativo.
-3. Abra o notebook no Colab: [![Abrir no Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aryribeiro/dio-lab-assistente-investimentos-rpa-n8n/blob/main/rpa/extrair_clientes.ipynb)
-4. Cole a URL em `N8N_WEBHOOK` (célula de configuração) e execute tudo. Com `N8N_WEBHOOK` vazio, o notebook gera as mensagens localmente (modo simulado).
+1. **Chave gratuita do Gemini:** crie em [Google AI Studio → Get API key](https://aistudio.google.com/apikey). **Não vincule conta de cobrança ao projeto**: com cobrança ativa, todo uso passa a ser pago, mesmo dentro dos limites gratuitos.
+2. No N8N, importe `n8n/workflow.json` (**Workflows → Import from File**).
+3. Abra o nó **Gemini (gratuito)**, crie a credencial *Google Gemini (PaLM) API* com a chave e selecione-a. A chave fica guardada no N8N; o `workflow.json` exportado leva só o nome da credencial.
+4. Copie a URL do nó **Webhook**: a de teste (`/webhook-test/clientes`) vale depois de clicar em *Execute workflow*; a de produção (`/webhook/clientes`), com o workflow publicado/ativo.
+5. Abra o notebook no Colab: [![Abrir no Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aryribeiro/dio-lab-assistente-investimentos-rpa-n8n/blob/main/rpa/extrair_clientes.ipynb)
+6. Cole a URL em `N8N_WEBHOOK` (célula de configuração) e execute tudo. Com `N8N_WEBHOOK` vazio, o notebook gera as mensagens fixas localmente (modo simulado).
+
+> O agente atende **um cliente por vez, com 7 s de intervalo**, para caber no limite gratuito de requisições por minuto. Com 10 clientes, a resposta leva cerca de 2 minutos; o notebook espera até 10.
 
 Para testar o N8N localmente com Docker:
 
@@ -38,6 +51,7 @@ Saída (resposta do Webhook):
 ```json
 {
   "total": 1,
+  "geradas_por_ia": 1,
   "aviso": "Dados fictícios, para fins educacionais. Não é recomendação de investimento.",
   "mensagens": [
     {
@@ -45,13 +59,16 @@ Saída (resposta do Webhook):
       "status": "ok",
       "recomendados": ["Poupança", "CDB Liquidez Diária", "Tesouro Selic"],
       "fora_do_alcance": [],
-      "mensagem": "Olá, Ana! Como seu perfil é Conservador, priorizamos renda fixa, com foco em segurança e liquidez. Com o seu saldo de R$ 12.500,00, você já pode aplicar em: Poupança (6,2%, a partir de R$ 100,00), CDB Liquidez Diária (12,5%, a partir de R$ 1.000,00) e Tesouro Selic (13,0%, a partir de R$ 500,00). Conte com a gente para montar sua carteira!"
+      "origem": "ia",
+      "mensagem": "(texto escrito pelo Agente de IA a partir dos fatos da mensagem fixa)",
+      "mensagem_fixa": "Olá, Ana! Como seu perfil é Conservador, priorizamos renda fixa, com foco em segurança e liquidez. Com o seu saldo de R$ 12.500,00, você já pode aplicar em: Poupança (6,2%, a partir de R$ 100,00), CDB Liquidez Diária (12,5%, a partir de R$ 1.000,00) e Tesouro Selic (13,0%, a partir de R$ 500,00). Conte com a gente para montar sua carteira!"
     }
   ]
 }
 ```
 
-`status` pode ser `ok`, `sem_produto_no_saldo`, `perfil_invalido` ou `saldo_invalido`.
+- `status`: `ok`, `sem_produto_no_saldo`, `perfil_invalido` ou `saldo_invalido`.
+- `origem`: `ia` (texto do agente aprovado na conferência) ou `modelo_fixo` (a mensagem fixa, com o `motivo`: falha na chamada, texto vazio, produto fora da lista, promessa de retorno ou cadastro incompleto).
 
 ### Decisões técnicas
 
@@ -62,16 +79,21 @@ Saída (resposta do Webhook):
 - **Resposta síncrona** (nó *Respond to Webhook*): o próprio notebook mostra as mensagens, sem depender de outro canal.
 - **Extração robusta:** `timeout`, `raise_for_status()`, leitura das células pela classe (`td.nome`, `td.email`...) com a posição como reserva e erro claro se a tabela sumir.
 - **Modo simulado com as mesmas regras:** a lógica do nó Code foi portada para Python e as duas versões foram comparadas, campo a campo, com casos-limite (perfil inválido, saldo ilegível, saldo abaixo de todos os mínimos). As saídas são idênticas.
-- **Fonte dos dados:** o notebook e o workflow leem a página e o CSV publicados pela DIO no GitHub Pages, que já estão no ar; para usar os do fork, ative o GitHub Pages na pasta `docs/` e troque as duas URLs.
+- **A IA escreve, mas não decide.** O cruzamento continua em código; o agente recebe como FATOS a mensagem fixa (produtos que cabem no saldo, mínimos, rentabilidades e quanto falta) e só reescreve o texto, com instrução de não citar outro produto, taxa ou número nem prometer retorno.
+- **Texto da IA passa por conferência antes de sair.** O nó *Validar e juntar mensagens* rejeita resposta vazia ou longa demais, citação de produto que não é do cliente e promessas ("garantido", "sem risco"). Rejeitado, o cliente recebe a mensagem fixa e o `motivo` fica registrado.
+- **A IA nunca derruba o fluxo.** O agente tenta até 3 vezes e, se falhar, segue adiante (*On Error: continue*); cadastro incompleto não usa IA. Sem chave ou sem cota, todos recebem a mensagem fixa.
+- **Plano gratuito do Gemini:** um cliente por chamada, com 7 s entre chamadas (*Batch Processing* do agente).
+- **Fonte dos dados:** a página e o CSV vêm do GitHub Pages do próprio fork (pasta `docs/`): qualquer mudança em `docs/` vai ao ar com o push.
 
 ### Como foi validado
 
-- Workflow importado e publicado num N8N 2.44.6 (Docker); `POST` com 9 clientes de teste devolveu HTTP 200 e uma saída idêntica à execução local do mesmo código. Payload vazio ou malformado devolve `total: 0`, sem erro.
-- Notebook executado do início ao fim nos dois modos: contra o N8N (saídas gravadas no próprio notebook) e simulado.
+- Workflow importado e publicado num N8N 2.44.6 (Docker) com o modelo `gemini-3.5-flash-lite` (plano gratuito). Notebook executado do início ao fim contra ele: **10 clientes extraídos do GitHub Pages, 10 mensagens escritas pela IA e aprovadas na conferência**, em cerca de 1 min 20 s (saídas gravadas no próprio notebook).
+- Casos-limite no N8N: 9 clientes de teste (perfil inválido, saldo ilegível, saldo abaixo de todos os mínimos, saldo milionário) devolveram HTTP 200; os cadastros inválidos ficaram com a mensagem fixa sem chamar a IA. Payload vazio ou malformado devolve `total: 0`, sem erro.
+- Sem IA disponível (chave inválida), todos os clientes recebem a mensagem fixa com `motivo: falha na chamada à IA`, e essa mensagem é idêntica à do modo simulado do notebook.
+- A conferência foi testada com respostas simuladas da IA: produto de outro perfil, promessa de retorno, número inventado, resposta vazia e erro caem na mensagem fixa; textos corretos passam.
+- O modelo foi escolhido testando a chave: `gemini-2.5-flash` e `gemini-2.5-flash-lite` já não estão disponíveis para chaves novas.
 
-![Saída do nó que gera as mensagens](evidencias/n8n-saida-mensagens.png)
-
-**Próximo passo (desafio completo):** trocar o modelo fixo de mensagem por um Agente de IA no N8N, mantendo o filtro de saldo mínimo antes do LLM.
+![Saída do nó que confere e junta as mensagens da IA](evidencias/n8n-saida-mensagens.png)
 
 ---
 
@@ -207,8 +229,8 @@ Conecte o Agente de IA do N8N a um modelo como Gemini ou GPT para:
 ### Desafio Completo
 
 - [x] Todos os itens do MVP
-- [ ] Integração com Agente de IA no N8N
-- [ ] Mensagens geradas dinamicamente via LLM
+- [x] Integração com Agente de IA no N8N
+- [x] Mensagens geradas dinamicamente via LLM
 - [x] Documentação explicando as decisões técnicas
 
 ## Estrutura do Repositório
@@ -221,8 +243,8 @@ Conecte o Agente de IA do N8N a um modelo como Gemini ou GPT para:
 ├── 📁 n8n/
 │   └── 📄 workflow.json            # ✅ Workflow exportado (Webhook → CSV → cruzamento → resposta)
 ├── 📁 evidencias/
-│   ├── 🖼️ n8n-execucao.png         # ✅ Execuções bem-sucedidas no N8N
-│   └── 🖼️ n8n-saida-mensagens.png  # ✅ Saída do nó que gera as mensagens
+│   ├── 🖼️ n8n-execucao.png         # ✅ Execução com o Agente de IA (10 clientes)
+│   └── 🖼️ n8n-saida-mensagens.png  # ✅ Saída conferida: 10 de 10 escritas pela IA
 └── 📁 docs/
     ├── 📄 index.html               # ✅ Página de clientes (já implementado)
     └── 📄 data.csv                 # ✅ Opções de investimento (já implementado)
@@ -244,7 +266,3 @@ Conecte o Agente de IA do N8N a um modelo como Gemini ou GPT para:
 - [GitHub Pages: Guia Rápido](https://pages.github.com/)
 
 ---
-
-**Bons estudos e mãos à obra** 🚀
-
-Se tiver dúvidas, lembre-se: a melhor forma de aprender é experimentando. Erre, corrija e celebre cada pequena vitória no caminho.
